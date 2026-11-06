@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f3f5f8;color:#172033;font-family:Arial,sans-serif}
+    .wrap{width:min(100% - 28px,520px);margin:28px auto}.panel{background:#fff;border-radius:18px;padding:22px;box-shadow:0 8px 28px #17203312}
+    h1{margin:0 0 8px;font-size:24px}.sub{color:#667085;line-height:1.5;margin:0 0 22px}
+    button{width:100%;border:0;border-radius:11px;padding:15px;background:#b42318;color:white;font-size:16px;font-weight:700;cursor:pointer}
+    button:disabled{opacity:.55;cursor:not-allowed}.manual{margin-top:22px;border-top:1px solid #e8ebf0;padding-top:18px}
+    label{display:block;font-weight:700;font-size:14px;margin-bottom:8px}input{width:100%;padding:14px;border:1px solid #ccd2dc;border-radius:10px;font-size:16px}
+    #submit{margin-top:10px;background:#172033}#status{display:none;margin-top:16px;padding:13px;border-radius:10px;line-height:1.5;white-space:pre-wrap}
+    #status.ok{display:block;background:#e9f7ef;color:#17663a}#status.bad{display:block;background:#fff0ef;color:#a32118}#status.info{display:block;background:#eef4ff;color:#244b8f}
+    .note{font-size:12px;color:#7a8495;line-height:1.5;margin-top:15px}
+  </style>
+</head>
+<body>
+<main class="wrap"><section class="panel">
+  <h1>Finance QR Scanner</h1>
+  <p class="sub">Klik tombol kamera untuk membuka pemindai QR. Setelah QR terbaca, nomor surat dikirim ke Google Apps Script untuk divalidasi dan disimpan.</p>
+  <button id="cameraBtn" type="button" onclick="openCamera()">Buka Kamera Scanner</button>
+  <div class="manual">
+    <label for="manualNo">Atau masukkan nomor surat secara manual</label>
+    <input id="manualNo" type="text" placeholder="Contoh: 1128/HCGA/AMM-IPT/X/2026" autocomplete="off">
+    <button id="submit" type="button" onclick="submitManual()">Proses Nomor Surat</button>
+  </div>
+  <div id="status" role="status" aria-live="polite"></div>
+  <p class="note">Pengguna scanner tidak perlu login Google atau memiliki akses Editor spreadsheet. Bagikan link Web App hanya kepada pengguna yang berwenang.</p>
+</section></main>
+<script>
+  // URL GitHub Pages:
+  const CAMERA_PAGE_URL = "https://fa-ipt.github.io/finance-qr-camera/scanner.html";
+  // Origin saja, tanpa path repository:
+  const EXPECTED_CAMERA_ORIGIN = "https://fa-ipt.github.io";
+  let scanWindow = null, channelToken = "", processing = false;
+
+  function showStatus(message, type) {
+    const el = document.getElementById("status");
+    el.textContent = message; el.className = type;
+  }
+  function makeToken() {
+    const bytes = new Uint8Array(24); crypto.getRandomValues(bytes);
+    return Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+  }
+  function openCamera() {
+    if (processing) return;
+    channelToken = makeToken();
+    const url = CAMERA_PAGE_URL + "?channel=" + encodeURIComponent(channelToken);
+    scanWindow = window.open(url, "FinanceQrCamera", "popup,width=620,height=760");
+    if (!scanWindow) {
+      showStatus("Chrome memblokir pop-up. Izinkan pop-up untuk halaman Google Apps Script ini, lalu klik Buka Kamera Scanner lagi.", "bad");
+      return;
+    }
+    showStatus("Halaman kamera dibuka. Izinkan akses kamera pada halaman GitHub Pages jika diminta.", "info");
+  }
+  window.addEventListener("message", function(event) {
+    if (event.origin !== EXPECTED_CAMERA_ORIGIN) return;
+    if (!event.data || event.data.type !== "FINANCE_QR_RESULT") return;
+    if (!channelToken || event.data.channel !== channelToken) return;
+    if (typeof event.data.value !== "string" || !event.data.value.trim()) return;
+    if (scanWindow && !scanWindow.closed) scanWindow.close();
+    channelToken = ""; processNumber(event.data.value.trim());
+  });
+  function submitManual() {
+    const value = document.getElementById("manualNo").value.trim();
+    if (!value) { showStatus("Masukkan nomor surat terlebih dahulu.", "bad"); return; }
+    processNumber(value);
+  }
+  function processNumber(value) {
+    if (processing) return;
+    processing = true;
+    document.getElementById("submit").disabled = true;
+    document.getElementById("cameraBtn").disabled = true;
+    showStatus("Memvalidasi nomor surat, mencocokkan NIK, dan memeriksa duplikat. Mohon tunggu...", "info");
+    google.script.run.withSuccessHandler(function(result) {
+      processing = false;
+      document.getElementById("submit").disabled = false;
+      document.getElementById("cameraBtn").disabled = false;
+      if (result && result.success) {
+        showStatus(result.message + "\nNo. Surat: " + result.surat, "ok");
+        document.getElementById("manualNo").value = "";
+      } else showStatus((result && result.message) || "Proses gagal. Silakan periksa data dan coba lagi.", "bad");
+    }).withFailureHandler(function(error) {
+      processing = false;
+      document.getElementById("submit").disabled = false;
+      document.getElementById("cameraBtn").disabled = false;
+      showStatus("Koneksi backend gagal: " + (error.message || error), "bad");
+    }).processScan(value);
+  }
+  document.getElementById("manualNo").addEventListener("keydown", e => { if (e.key === "Enter") submitManual(); });
+</script>
+</body></html>
