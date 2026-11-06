@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#a51d2d">
+<title>Finance QR Scanner</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+:root{font-family:Arial,Helvetica,sans-serif;color:#182230;background:#f3f5f8}
+*{box-sizing:border-box}body{margin:0}.wrap{width:min(100% - 24px,600px);margin:24px auto}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:20px;box-shadow:0 8px 28px #10182812}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:12px}.mark{width:42px;height:42px;border-radius:12px;background:#a51d2d;color:#fff;display:grid;place-items:center;font-weight:800;font-size:18px}
+h1{font-size:23px;margin:0}.sub{color:#667085;font-size:14px;line-height:1.5;margin:6px 0 18px}
+#reader{width:100%;overflow:hidden;border-radius:12px;background:#111}.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+button{border:0;border-radius:10px;padding:14px 12px;background:#a51d2d;color:#fff;font-weight:700;font-size:15px;cursor:pointer}
+button.secondary{background:#344054}button:disabled{opacity:.5;cursor:not-allowed}
+.manual{border-top:1px solid #eaecf0;margin-top:20px;padding-top:18px}label{display:block;font-weight:700;font-size:14px;margin-bottom:8px}
+input{width:100%;border:1px solid #cfd4dc;border-radius:10px;padding:14px;font-size:16px}
+#manualBtn{width:100%;margin-top:10px;background:#172b4d}
+#status{display:none;margin-top:16px;border-radius:10px;padding:13px;line-height:1.5;white-space:pre-wrap;font-size:14px}
+#status.ok{display:block;background:#e8f7ee;color:#17663a}#status.bad{display:block;background:#fff0ef;color:#a32118}#status.info{display:block;background:#edf4ff;color:#244b8f}
+.note{font-size:12px;color:#667085;line-height:1.5;margin:15px 0 0}
+@media(max-width:420px){.actions{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="wrap"><section class="card">
+  <div class="brand"><div class="mark">QR</div><div><h1>Finance QR Scanner</h1><div style="font-size:12px;color:#667085;margin-top:3px">Input transaksi perjalanan dinas</div></div></div>
+  <p class="sub">Arahkan kamera ke QR yang berisi nomor surat. Sistem akan mencocokkan seluruh NIK pada INPUT STD dan INPUT UANG JALAN sebelum menyimpan data.</p>
+  <div id="reader"></div>
+  <div class="actions">
+    <button id="startBtn" type="button">Aktifkan Kamera</button>
+    <button id="stopBtn" class="secondary" type="button" disabled>Matikan Kamera</button>
+  </div>
+  <div class="manual">
+    <label for="manualNo">Input nomor surat secara manual</label>
+    <input id="manualNo" type="text" placeholder="Contoh: 1128/HCGA/AMM-IPT/X/2026" autocomplete="off">
+    <button id="manualBtn" type="button">Proses Nomor Surat</button>
+  </div>
+  <div id="status" role="status" aria-live="polite"></div>
+  <p class="note">Akses scanner tidak memerlukan login Google atau izin Editor spreadsheet. Kamera memerlukan HTTPS dan izin kamera dari browser. Setiap nomor surat hanya dapat diproses satu kali.</p>
+</section></main>
+<script>
+/* GANTI dengan URL Web App GAS setelah deployment, berakhiran /exec */
+const GAS_WEB_APP_URL = "GANTI_DENGAN_URL_WEB_APP_GAS/exec";
+
+let scanner = null;
+let busy = false;
+let isScanning = false;
+const $ = id => document.getElementById(id);
+
+function status(message, type) {
+  $("status").textContent = message;
+  $("status").className = type;
+}
+function validEndpoint() {
+  return /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(GAS_WEB_APP_URL);
+}
+async function startCamera() {
+  if (busy || isScanning) return;
+  if (!window.Html5Qrcode) {
+    status("Library kamera gagal dimuat. Periksa koneksi internet lalu muat ulang halaman.", "bad");
+    return;
+  }
+  $("startBtn").disabled = true;
+  try {
+    scanner = new Html5Qrcode("reader");
+    await scanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 250, height: 180 }, aspectRatio: 1.25 },
+      decodedText => {
+        if (busy) return;
+        stopCamera();
+        processNumber(decodedText);
+      },
+      () => {}
+    );
+    isScanning = true;
+    $("stopBtn").disabled = false;
+    status("Kamera aktif. Arahkan QR nomor surat ke dalam bingkai.", "info");
+  } catch (err) {
+    scanner = null;
+    $("startBtn").disabled = false;
+    status("Kamera tidak dapat diaktifkan: " + (err.message || err) +
+      "\nPastikan menggunakan HTTPS dan izin kamera untuk situs ini sudah diizinkan.", "bad");
+  }
+}
+async function stopCamera() {
+  if (scanner) {
+    try {
+      if (scanner.isScanning) await scanner.stop();
+      await scanner.clear();
+    } catch (e) {}
+  }
+  scanner = null;
+  isScanning = false;
+  $("startBtn").disabled = false;
+  $("stopBtn").disabled = true;
+}
+function processNumber(raw) {
+  const number = String(raw || "").trim();
+  if (!number) { status("Nomor surat kosong atau QR tidak terbaca.", "bad"); return; }
+  if (busy) return;
+  if (!validEndpoint()) {
+    status("URL backend belum diatur. Isi GAS_WEB_APP_URL di file index.html dengan URL deployment GAS.", "bad");
+    return;
+  }
+  busy = true;
+  $("manualBtn").disabled = true;
+  $("startBtn").disabled = true;
+  status("Memvalidasi nomor surat, mencocokkan NIK, dan memeriksa duplikasi. Mohon tunggu...", "info");
+
+  const callbackName = "financeQrResponse";
+  const old = window[callbackName];
+  const script = document.createElement("script");
+  let finished = false;
+  const timeout = setTimeout(() => finish({
+    success:false,
+    message:"Backend tidak memberikan respons dalam 30 detik. Periksa URL Web App, deployment Anyone, dan koneksi internet."
+  }), 30000);
+
+  function finish(result) {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timeout);
+    script.remove();
+    window[callbackName] = old;
+    busy = false;
+    $("manualBtn").disabled = false;
+    $("startBtn").disabled = false;
+    if (result && result.success) {
+      status(result.message + "\nNo. Surat: " + (result.surat || number), "ok");
+      $("manualNo").value = "";
+    } else {
+      status((result && result.message) || "Proses gagal. Periksa data sumber dan coba lagi.", "bad");
+    }
+  }
+
+  window[callbackName] = finish;
+  script.onerror = () => finish({
+    success:false,
+    message:"Tidak dapat mengakses backend GAS. Pastikan URL /exec benar dan deployment dapat diakses oleh Anyone."
+  });
+  const url = new URL(GAS_WEB_APP_URL);
+  url.searchParams.set("action", "scan");
+  url.searchParams.set("nomorSurat", number);
+  url.searchParams.set("callback", callbackName);
+  url.searchParams.set("_", String(Date.now()));
+  script.src = url.toString();
+  document.head.appendChild(script);
+}
+$("startBtn").addEventListener("click", startCamera);
+$("stopBtn").addEventListener("click", stopCamera);
+$("manualBtn").addEventListener("click", () => processNumber($("manualNo").value));
+$("manualNo").addEventListener("keydown", e => {
+  if (e.key === "Enter") processNumber($("manualNo").value);
+});
+window.addEventListener("pagehide", () => { if (scanner && scanner.isScanning) scanner.stop().catch(() => {}); });
+</script>
+</body>
+</html>
