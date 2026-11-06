@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kamera Finance QR</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f3f5f8;color:#172033;font-family:Arial,sans-serif}
+    .wrap{width:min(100% - 24px,560px);margin:18px auto}.panel{background:white;border-radius:16px;padding:18px;box-shadow:0 8px 28px #17203312}
+    h2{margin:0 0 7px}.sub{font-size:14px;color:#667085;line-height:1.5;margin:0 0 16px}
+    #reader{width:100%;overflow:hidden;border-radius:12px}button{width:100%;border:0;border-radius:10px;padding:14px;background:#b42318;color:white;font-weight:700;font-size:15px;margin-top:12px}
+    #status{margin-top:14px;padding:12px;border-radius:10px;display:none;line-height:1.5}#status.ok{display:block;background:#e9f7ef;color:#17663a}#status.bad{display:block;background:#fff0ef;color:#a32118}#status.info{display:block;background:#eef4ff;color:#244b8f}
+  </style>
+</head>
+<body><main class="wrap"><section class="panel">
+  <h2>Kamera QR Finance</h2>
+  <p class="sub">Izinkan Chrome mengakses kamera. Arahkan QR nomor surat ke bingkai.</p>
+  <div id="reader"></div>
+  <button id="start" onclick="startScan()">Aktifkan Kamera</button>
+  <button id="stop" onclick="stopScan()" style="background:#344054" disabled>Matikan Kamera</button>
+  <div id="status" role="status" aria-live="polite"></div>
+</section></main>
+<script>
+  const params=new URLSearchParams(location.search);
+  const channel=params.get("channel")||"";
+  let qr=null, sending=false;
+  function show(m,t){const e=document.getElementById("status");e.textContent=m;e.className=t;}
+  async function startScan(){
+    if(!channel){show("Token komunikasi tidak ditemukan. Buka kamera dari halaman Finance QR Scanner.","bad");return;}
+    if(!window.Html5Qrcode){show("Library scanner gagal dimuat. Periksa koneksi internet dan muat ulang halaman.","bad");return;}
+    document.getElementById("start").disabled=true;
+    try{
+      qr=new Html5Qrcode("reader");
+      await qr.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:190},aspectRatio:1.2},
+        decoded=>{
+          if(sending)return;sending=true;
+          show("QR terbaca. Mengirim nomor surat ke halaman Finance...","info");
+          window.opener.postMessage({type:"FINANCE_QR_RESULT",channel:channel,value:decoded}, "*");
+          show("Nomor surat sudah dikirim. Jendela ini akan ditutup.","ok");
+        },()=>{});
+      document.getElementById("stop").disabled=false;
+      show("Kamera aktif. Arahkan QR ke dalam bingkai.","info");
+    }catch(err){
+      qr=null;document.getElementById("start").disabled=false;
+      show("Kamera tidak dapat diaktifkan: "+err+". Periksa izin kamera situs GitHub Pages di Chrome.","bad");
+    }
+  }
+  async function stopScan(){
+    if(qr){try{if(qr.isScanning)await qr.stop();await qr.clear();}catch(e){}qr=null;}
+    document.getElementById("start").disabled=false;document.getElementById("stop").disabled=true;
+  }
+  window.addEventListener("beforeunload",()=>{if(qr&&qr.isScanning)qr.stop().catch(()=>{});});
+</script></body></html>
